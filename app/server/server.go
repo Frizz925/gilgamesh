@@ -3,8 +3,10 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
+	"os"
 
 	"github.com/Frizz925/gilgamesh/app"
+	"github.com/Frizz925/gilgamesh/auth"
 	"github.com/Frizz925/gilgamesh/server"
 	"github.com/Frizz925/gilgamesh/worker"
 	"go.uber.org/zap"
@@ -17,7 +19,20 @@ func Start() error {
 		return fmt.Errorf("config load: %+v", err)
 	}
 
-	logger, err := zap.NewDevelopment()
+	var credentials auth.Credentials
+	if cfg.Proxy.PasswordsFile != "" {
+		f, err := os.Open(cfg.Proxy.PasswordsFile)
+		if err != nil {
+			return fmt.Errorf("passwords file read: %+v", err)
+		}
+		v, err := auth.ReadCredentials(f)
+		if err != nil {
+			return fmt.Errorf("passwords file parsing: %+v", err)
+		}
+		credentials = v
+	}
+
+	logger, err := zap.NewProduction()
 	if err != nil {
 		return fmt.Errorf("logger init: %+v", err)
 	}
@@ -30,6 +45,7 @@ func Start() error {
 			Logger:          logger,
 			ReadBufferSize:  cfg.Proxy.Worker.ReadBuffer,
 			WriteBufferSize: cfg.Proxy.Worker.WriteBuffer,
+			Credentials:     credentials,
 		},
 	})
 

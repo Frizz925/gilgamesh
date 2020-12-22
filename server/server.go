@@ -2,7 +2,6 @@ package server
 
 import (
 	"crypto/tls"
-	"io"
 	"net"
 
 	"github.com/Frizz925/gilgamesh/utils"
@@ -59,13 +58,9 @@ func (s *Server) Serve(l net.Listener) error {
 		}
 		w := s.pool.Get()
 		go func() {
-			if err := w.ServeConn(conn); err != nil && err != io.EOF {
-				s.log.Error("Serve error", zap.Error(err))
-			}
+			w.ServeConn(conn)
 			s.pool.Put(w)
-			if err := conn.Close(); err != nil {
-				s.log.Error("Serve closing conn error", zap.Error(err))
-			}
+			conn.Close()
 		}()
 	}
 }
