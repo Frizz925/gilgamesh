@@ -113,7 +113,6 @@ func (w *Worker) ServeConn(c net.Conn) {
 		writeResponse(log, respond(nil, responseCode), wb)
 		return
 	}
-	defer req.Body.Close()
 	defer func() {
 		if responseCode == http.StatusProxyAuthRequired {
 			hdr := make(http.Header)
@@ -122,6 +121,11 @@ func (w *Worker) ServeConn(c net.Conn) {
 		} else if responseCode > 0 {
 			writeResponse(log, respond(req, responseCode), wb)
 		}
+		if req.Body != nil {
+			_ = req.Body.Close()
+		}
+		log.Info("Closing connection")
+		_ = c.Close()
 	}()
 
 	if w.authorization {
@@ -151,7 +155,6 @@ func (w *Worker) ServeConn(c net.Conn) {
 			log.Error("Password mismatch")
 			return
 		}
-		log.Info("Authorized user")
 	}
 
 	responseCode = http.StatusBadRequest

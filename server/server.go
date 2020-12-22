@@ -60,7 +60,6 @@ func (s *Server) Serve(l net.Listener) error {
 		go func() {
 			w.ServeConn(conn)
 			s.pool.Put(w)
-			conn.Close()
 		}()
 	}
 }
