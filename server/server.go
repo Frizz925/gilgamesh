@@ -2,64 +2,77 @@ package server
 
 import (
 	"crypto/tls"
+	"errors"
 	"net"
+	"sync/atomic"
 
 	"github.com/Frizz925/gilgamesh/utils"
 	"github.com/Frizz925/gilgamesh/worker"
 	"go.uber.org/zap"
 )
 
+var ErrServerAlreadyStopped = errors.New("server already stopped")
+
 type Config struct {
 	WorkerConfig worker.Config
-
-	Logger   *zap.Logger
-	PoolSize int
+	Logger       *zap.Logger
+	PoolSize     int
+	TLSConfig    *tls.Config
 }
 
 type Server struct {
 	noCopy utils.NoCopy //nolint:unused,structcheck
 
-	log  *zap.Logger
-	pool *worker.Pool
+	logger    *zap.Logger
+	pool      *worker.Pool
+	tlsConfig atomic.Value
 }
 
 func New(cfg Config) *Server {
 	if cfg.Logger == nil {
 		panic("Logger is required")
 	}
-	return &Server{
-		log:  cfg.Logger,
-		pool: worker.NewPool(cfg.PoolSize, cfg.WorkerConfig),
+	s := &Server{
+		logger: cfg.Logger,
+		pool:   worker.NewPool(cfg.PoolSize, cfg.WorkerConfig),
 	}
-}
-
-func (s *Server) ListenAndServe(addr string) error {
-	l, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
+	if cfg.TLSConfig != nil {
+		s.tlsConfig.Store(cfg.TLSConfig)
 	}
-	return s.Serve(l)
-}
-
-func (s *Server) ListenAndServeTLS(addr string, config *tls.Config) error {
-	l, err := tls.Listen("tcp", addr, config)
-	if err != nil {
-		return err
-	}
-	return s.Serve(l)
+	return s
 }
 
 func (s *Server) Serve(l net.Listener) error {
-	s.log.Info("Gilgamesh is serving", zap.String("addr", l.Addr().String()))
+	return s.serve(l, false)
+}
+
+func (s *Server) ServeTLS(l net.Listener) error {
+	return s.serve(l, true)
+}
+
+func (s *Server) Close() {
+	s.pool.Close()
+}
+
+func (s *Server) serve(l net.Listener, isTLS bool) error {
+	log := s.logger.With(zap.String("listener", l.Addr().String()))
+	log.Info("Gilgamesh service started")
+	defer log.Info("Gilgamesh service stopped")
 	for {
-		conn, err := l.Accept()
+		c, err := l.Accept()
 		if err != nil {
 			return err
 		}
-		w := s.pool.Get()
-		go func() {
-			w.ServeConn(conn)
-			s.pool.Put(w)
-		}()
+		if isTLS {
+			tc := s.tlsConfig.Load().(*tls.Config)
+			c = tls.Server(c, tc)
+		}
+		go s.serveConn(c)
 	}
+}
+
+func (s *Server) serveConn(c net.Conn) {
+	w := s.pool.Get()
+	w.ServeConn(c)
+	s.pool.Put(w)
 }

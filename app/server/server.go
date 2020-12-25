@@ -3,15 +3,24 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 
 	"github.com/Frizz925/gilgamesh/app"
 	"github.com/Frizz925/gilgamesh/auth"
 	"github.com/Frizz925/gilgamesh/server"
+	"github.com/Frizz925/gilgamesh/utils"
 	"github.com/Frizz925/gilgamesh/worker"
-	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+
+	"go.uber.org/zap"
 )
+
+type Dependencies struct {
+	Logger    *zap.Logger
+	TLSConfig *tls.Config
+}
 
 func Start() error {
 	cfg, err := app.LoadConfig()
@@ -19,77 +28,83 @@ func Start() error {
 		return fmt.Errorf("config load: %+v", err)
 	}
 
-	var credentials auth.Credentials
-	if cfg.Proxy.PasswordsFile != "" {
-		f, err := os.Open(cfg.Proxy.PasswordsFile)
-		if err != nil {
-			return fmt.Errorf("passwords file read: %+v", err)
-		}
-		v, err := auth.ReadCredentials(f)
-		if err != nil {
-			return fmt.Errorf("passwords file parsing: %+v", err)
-		}
-		credentials = v
+	deps := &Dependencies{}
+	if utils.IsProduction() {
+		deps.Logger, err = zap.NewProduction()
+	} else {
+		deps.Logger, err = zap.NewDevelopment()
 	}
-
-	logger, err := zap.NewProduction()
 	if err != nil {
 		return fmt.Errorf("logger init: %+v", err)
 	}
-	defer logger.Sync() //nolint:errcheck
-
-	s := server.New(server.Config{
-		Logger:   logger,
-		PoolSize: cfg.Proxy.Worker.PoolCount,
-		WorkerConfig: worker.Config{
-			Logger:          logger,
-			ReadBufferSize:  cfg.Proxy.Worker.ReadBuffer,
-			WriteBufferSize: cfg.Proxy.Worker.WriteBuffer,
-			Credentials:     credentials,
-		},
-	})
-
-	var g errgroup.Group
-	if err := serveHTTP(s, cfg.Proxy.Ports, &g); err != nil {
-		return fmt.Errorf("http listener: %+v", err)
+	if len(cfg.Proxy.Server.TLSPorts) > 0 {
+		cer, err := tls.LoadX509KeyPair(
+			cfg.Proxy.TLS.Certificate,
+			cfg.Proxy.TLS.CertificateKey,
+		)
+		if err != nil {
+			return fmt.Errorf("certificate load: %+v", err)
+		}
+		deps.TLSConfig = &tls.Config{
+			Certificates: []tls.Certificate{cer},
+		}
 	}
-	if err := serveHTTPS(s, cfg.Proxy.SSL, &g); err != nil {
-		return fmt.Errorf("https listener: %+v", err)
+
+	s, err := New(cfg, deps)
+	if err != nil {
+		return fmt.Errorf("server init: %+v", err)
+	}
+
+	g := &errgroup.Group{}
+	if err := listenAndServe(g, cfg.Proxy.Server.Ports, s.Serve); err != nil {
+		return err
+	}
+	if err := listenAndServe(g, cfg.Proxy.Server.TLSPorts, s.ServeTLS); err != nil {
+		return err
 	}
 	return g.Wait()
 }
 
-func serveHTTP(s *server.Server, ports []int, g *errgroup.Group) error {
-	for _, port := range ports {
-		addr := portToAddr(port)
-		g.Go(func() error {
-			return s.ListenAndServe(addr)
-		})
+func New(cfg *app.Config, deps *Dependencies) (*server.Server, error) {
+	var credentials auth.Credentials
+	if cfg.Proxy.PasswordsFile != "" {
+		f, err := os.Open(cfg.Proxy.PasswordsFile)
+		if err != nil {
+			return nil, fmt.Errorf("passwords file read: %+v", err)
+		}
+		v, err := auth.ReadCredentials(f)
+		if err != nil {
+			return nil, fmt.Errorf("passwords file parsing: %+v", err)
+		}
+		credentials = v
 	}
-	return nil
+
+	return server.New(server.Config{
+		Logger:    deps.Logger,
+		TLSConfig: deps.TLSConfig,
+		PoolSize:  cfg.Proxy.Worker.PoolCount,
+		WorkerConfig: worker.Config{
+			Logger:          deps.Logger,
+			ReadBufferSize:  cfg.Proxy.Worker.ReadBuffer,
+			WriteBufferSize: cfg.Proxy.Worker.WriteBuffer,
+			Credentials:     credentials,
+		},
+	}), nil
 }
 
-func serveHTTPS(s *server.Server, cfg app.ProxySSL, g *errgroup.Group) error {
-	if len(cfg.Ports) < 0 {
-		return nil
-	}
-	cer, err := tls.LoadX509KeyPair(cfg.Certificate, cfg.CertificateKey)
-	if err != nil {
-		return err
-	}
-	tlsCfg := &tls.Config{
-		MinVersion:   tls.VersionTLS12,
-		Certificates: []tls.Certificate{cer},
-	}
-	for _, port := range cfg.Ports {
-		addr := portToAddr(port)
+func listenAndServe(g *errgroup.Group, ports []int, serve func(l net.Listener) error) error {
+	for _, port := range ports {
+		l, err := net.Listen("tcp", portToAddr(port))
+		if err != nil {
+			return fmt.Errorf("listener init: %+v", err)
+		}
 		g.Go(func() error {
-			return s.ListenAndServeTLS(addr, tlsCfg)
+			return serve(l)
 		})
 	}
 	return nil
 }
 
 func portToAddr(port int) string {
-	return fmt.Sprintf(":%d", port)
+	return net.JoinHostPort("", strconv.Itoa(port))
 }

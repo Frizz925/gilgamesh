@@ -14,19 +14,19 @@ type Pool struct {
 	preallocated bool
 }
 
-func NewPool(size int, config ...Config) *Pool {
+func NewPool(size int, cfg Config) *Pool {
 	p := &Pool{
 		preallocated: size > 0,
 	}
 	if p.preallocated {
 		p.ch = make(chan *Worker, size)
 		for i := 0; i < size; i++ {
-			p.ch <- New(config...)
+			p.ch <- New(cfg)
 		}
 	} else {
 		p.pool = &sync.Pool{
 			New: func() interface{} {
-				return New(config...)
+				return New(cfg)
 			},
 		}
 	}
@@ -49,5 +49,19 @@ func (p *Pool) Put(w *Worker) {
 	case p.ch <- w:
 	default:
 		panic("Pre-allocated pool is full!")
+	}
+}
+
+func (p *Pool) Close() {
+	if !p.preallocated {
+		return
+	}
+	// Drain the pre-allocated workers
+	for {
+		select {
+		case <-p.ch:
+		default:
+			return
+		}
 	}
 }

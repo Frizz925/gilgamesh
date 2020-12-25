@@ -8,16 +8,20 @@ type Config struct {
 }
 
 type Proxy struct {
-	Ports         []int       `mapstructure:"ports"`
 	PasswordsFile string      `mapstructure:"passwords_file"`
-	SSL           ProxySSL    `mapstructure:"ssl"`
+	TLS           ProxyTLS    `mapstructure:"tls"`
+	Server        ProxyServer `mapstructure:"server"`
 	Worker        ProxyWorker `mapstructure:"worker"`
 }
 
-type ProxySSL struct {
-	Ports          []int  `mapstructure:"ports"`
+type ProxyTLS struct {
 	Certificate    string `mapstructure:"certificate"`
 	CertificateKey string `mapstructure:"certificate_key"`
+}
+
+type ProxyServer struct {
+	Ports    []int `mapstructure:"ports"`
+	TLSPorts []int `mapstructure:"tls_ports"`
 }
 
 type ProxyWorker struct {
@@ -31,10 +35,6 @@ type Management struct {
 }
 
 func LoadConfig() (*Config, error) {
-	viper.SetConfigName("config")
-	viper.SetConfigType("toml")
-	viper.AddConfigPath("/etc/gilgamesh")
-	viper.AddConfigPath(".")
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, err
 	}
@@ -43,4 +43,11 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func init() {
+	viper.SetConfigName("config")
+	viper.SetConfigType("toml")
+	viper.AddConfigPath("/etc/gilgamesh")
+	viper.AddConfigPath(".")
 }

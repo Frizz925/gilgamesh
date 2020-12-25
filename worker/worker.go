@@ -65,11 +65,7 @@ var (
 	}
 )
 
-func New(config ...Config) *Worker {
-	var cfg Config
-	if len(config) > 0 {
-		cfg = config[0]
-	}
+func New(cfg Config) *Worker {
 	if cfg.ReadBufferSize < MinBufferSize {
 		cfg.ReadBufferSize = MinBufferSize
 	}
@@ -104,9 +100,18 @@ func (w *Worker) ServeConn(c net.Conn) {
 	defer w.mu.Unlock()
 	rb := w.acquireReader(c)
 	wb := w.acquireWriter(c)
-	log := w.logger.With(zap.String("src", c.RemoteAddr().String()))
 
-	var responseCode int
+	log := w.logger.With(
+		zap.String("src", c.RemoteAddr().String()),
+		zap.String("listener", c.LocalAddr().String()),
+	)
+	log.Info("Serving new connection")
+	defer func() {
+		_ = c.Close()
+		log.Info("Closed connection")
+	}()
+
+	responseCode := http.StatusBadRequest
 	req, err := readRequest(rb)
 	if err != nil {
 		log.Error("Malformed HTTP request")
@@ -124,8 +129,6 @@ func (w *Worker) ServeConn(c net.Conn) {
 		if req.Body != nil {
 			_ = req.Body.Close()
 		}
-		log.Info("Closing connection")
-		_ = c.Close()
 	}()
 
 	if w.authorization {

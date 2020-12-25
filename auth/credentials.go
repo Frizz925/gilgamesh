@@ -13,13 +13,13 @@ type Credentials map[string]Password
 
 type Password []byte
 
-func (p Password) Compare(password []byte) error {
-	return bcrypt.CompareHashAndPassword(p[:], password)
-}
-
 func CreatePassword(plaintext []byte) (Password, error) {
 	b, err := bcrypt.GenerateFromPassword(plaintext, bcrypt.DefaultCost)
 	return Password(b), err
+}
+
+func (p Password) Compare(password []byte) error {
+	return bcrypt.CompareHashAndPassword(p[:], password)
 }
 
 func WriteCredentials(w io.Writer, credentials Credentials) error {
