@@ -3,8 +3,7 @@ package app
 import "github.com/spf13/viper"
 
 type Config struct {
-	Proxy      Proxy      `mapstructure:"proxy"`
-	Management Management `mapstructure:"management"`
+	Proxy Proxy `mapstructure:"proxy"`
 }
 
 type Proxy struct {
@@ -28,10 +27,6 @@ type ProxyWorker struct {
 	PoolCount   int `mapstructure:"pool_count"`
 	ReadBuffer  int `mapstructure:"read_buffer"`
 	WriteBuffer int `mapstructure:"write_buffer"`
-}
-
-type Management struct {
-	UnixSocket string `mapstructure:"unix_socket"`
 }
 
 func LoadConfig() (*Config, error) {
