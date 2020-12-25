@@ -29,14 +29,11 @@ func WriteCredentials(w io.Writer, credentials Credentials) error {
 	} else {
 		bw = bufio.NewWriter(w)
 	}
-	defer bw.Flush()
 	for user, password := range credentials {
 		line := fmt.Sprintf("%s:%s\n", user, password)
-		if _, err := bw.WriteString(line); err != nil {
-			return err
-		}
+		bw.WriteString(line) //nolint:errcheck
 	}
-	return nil
+	return bw.Flush()
 }
 
 func ReadCredentials(r io.Reader) (Credentials, error) {

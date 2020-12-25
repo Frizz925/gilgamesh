@@ -32,8 +32,14 @@ const (
 type Worker struct {
 	id     uint64
 	b64enc *base64.Encoding
+
 	reader *bufio.Reader
 	writer *bufio.Writer
+
+	tunnel struct {
+		reader *bufio.Reader
+		writer *bufio.Writer
+	}
 
 	logger          *zap.Logger
 	dialer          *net.Dialer
@@ -79,7 +85,7 @@ func New(cfg Config) *Worker {
 		cfg.Dialer = new(net.Dialer)
 	}
 	id := atomic.AddUint64(&nextID, 1)
-	return &Worker{
+	w := &Worker{
 		id:     id,
 		b64enc: base64.URLEncoding,
 
@@ -93,13 +99,18 @@ func New(cfg Config) *Worker {
 		tunnelBuf:     make([]byte, cfg.ReadBufferSize),
 		authorization: len(cfg.Credentials) > 0,
 	}
+	w.reader = bufio.NewReaderSize(nil, cfg.ReadBufferSize)
+	w.writer = bufio.NewWriterSize(nil, cfg.WriteBufferSize)
+	w.tunnel.reader = bufio.NewReaderSize(nil, cfg.ReadBufferSize)
+	w.tunnel.writer = bufio.NewWriterSize(nil, cfg.WriteBufferSize)
+	return w
 }
 
 func (w *Worker) ServeConn(c net.Conn) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	rb := w.acquireReader(c)
-	wb := w.acquireWriter(c)
+	rb := acquireReader(w.reader, c)
+	wb := acquireWriter(w.writer, c)
 
 	log := w.logger.With(
 		zap.String("src", c.RemoteAddr().String()),
@@ -111,12 +122,19 @@ func (w *Worker) ServeConn(c net.Conn) {
 		log.Info("Closed connection")
 	}()
 
-	responseCode := http.StatusBadRequest
+	// Zero response code means close connection without returning response
+	responseCode := 0
 	req, err := readRequest(rb)
 	if err != nil {
 		log.Error("Malformed HTTP request")
 		writeResponse(log, respond(nil, responseCode), wb)
 		return
+	}
+	if req.URL.Scheme == "" {
+		req.URL.Scheme = "http"
+	}
+	if req.URL.Host == "" {
+		req.URL.Host = req.Host
 	}
 	defer func() {
 		if responseCode == http.StatusProxyAuthRequired {
@@ -161,11 +179,12 @@ func (w *Worker) ServeConn(c net.Conn) {
 	}
 
 	responseCode = http.StatusBadRequest
-	if req.URL.Host == "" {
-		log.Error("Malformed request URI", zap.String("url", req.URL.String()))
+	reqhost := req.Host
+	if reqhost == "" {
+		log.Error("Unknown request target host", zap.String("url", req.URL.String()))
 		return
 	}
-	host, port, err := net.SplitHostPort(req.URL.Host)
+	host, port, err := net.SplitHostPort(reqhost)
 	if err != nil {
 		host = req.URL.Host
 		port = "80"
@@ -181,6 +200,8 @@ func (w *Worker) ServeConn(c net.Conn) {
 		return
 	}
 	defer t.Close()
+	tr := acquireReader(w.tunnel.reader, t)
+	tw := acquireWriter(w.tunnel.writer, t)
 
 	responseCode = 0
 	if req.Method == http.MethodConnect {
@@ -198,33 +219,35 @@ func (w *Worker) ServeConn(c net.Conn) {
 			log.Error("Failed to dump request", zap.Error(err))
 			return
 		}
-		if err := writeFull(t, b); err != nil {
+		tw.Write(b) //nolint:errcheck
+		if err := tw.Flush(); err != nil {
 			log.Error("Failed to write request to tunnel", zap.Error(err))
 			return
 		}
 	}
 
 	g := &errgroup.Group{}
+	// Peer -> Proxy -> Tunnel
 	g.Go(func() error {
 		for {
 			n, err := rb.Read(w.peerBuf)
 			if err != nil {
 				return err
 			}
-			if err := writeFull(t, w.peerBuf[:n]); err != nil {
+			tw.Write(w.peerBuf[:n]) //nolint:errcheck
+			if err := tw.Flush(); err != nil {
 				return err
 			}
 		}
 	})
+	// Tunnel -> Proxy -> Peer
 	g.Go(func() error {
 		for {
-			n, err := t.Read(w.tunnelBuf)
+			n, err := tr.Read(w.tunnelBuf)
 			if err != nil {
 				return err
 			}
-			if _, err := wb.Write(w.tunnelBuf[:n]); err != nil {
-				return err
-			}
+			wb.Write(w.tunnelBuf[:n]) //nolint:errcheck
 			if err := wb.Flush(); err != nil {
 				return err
 			}
@@ -233,24 +256,6 @@ func (w *Worker) ServeConn(c net.Conn) {
 	if err := g.Wait(); err != nil && err != io.EOF {
 		log.Error("Tunnel error", zap.Error(err))
 	}
-}
-
-func (w *Worker) acquireReader(c net.Conn) *bufio.Reader {
-	if w.reader == nil {
-		w.reader = bufio.NewReaderSize(c, w.readBufferSize)
-	} else {
-		w.reader.Reset(c)
-	}
-	return w.reader
-}
-
-func (w *Worker) acquireWriter(c net.Conn) *bufio.Writer {
-	if w.writer == nil {
-		w.writer = bufio.NewWriterSize(c, w.writeBufferSize)
-	} else {
-		w.writer.Reset(c)
-	}
-	return w.writer
 }
 
 func (w *Worker) establishTunnel(hostport string) (net.Conn, error) {
@@ -310,13 +315,12 @@ func writeResponse(log *zap.Logger, res *http.Response, wb *bufio.Writer) bool {
 	return true
 }
 
-func writeFull(w io.Writer, p []byte) error {
-	for n := 0; n < len(p); {
-		nn, err := w.Write(p[n:])
-		if err != nil {
-			return err
-		}
-		n += nn
-	}
-	return nil
+func acquireReader(rb *bufio.Reader, r io.Reader) *bufio.Reader {
+	rb.Reset(r)
+	return rb
+}
+
+func acquireWriter(wb *bufio.Writer, w io.Writer) *bufio.Writer {
+	wb.Reset(w)
+	return wb
 }

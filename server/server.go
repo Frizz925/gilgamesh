@@ -42,6 +42,10 @@ func New(cfg Config) *Server {
 	return s
 }
 
+func (s *Server) UpdateTLSConfig(cfg *tls.Config) {
+	s.tlsConfig.Store(cfg)
+}
+
 func (s *Server) Serve(l net.Listener) error {
 	return s.serve(l, false)
 }

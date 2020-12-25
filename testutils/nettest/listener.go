@@ -1,20 +1,37 @@
 package nettest
 
-import "net"
+import (
+	"net"
+	"sync"
+)
 
 type listener struct {
-	net.Conn
+	ch        chan net.Conn
+	addr      net.Addr
+	closeOnce sync.Once
 }
 
 func NewListener() (net.Listener, net.Conn) {
 	s, c := net.Pipe()
-	return &listener{s}, c
+	l := &listener{
+		ch:   make(chan net.Conn, 1),
+		addr: s.LocalAddr(),
+	}
+	l.ch <- s
+	return l, c
 }
 
 func (l *listener) Accept() (net.Conn, error) {
-	return l.Conn, nil
+	return <-l.ch, nil
 }
 
 func (l *listener) Addr() net.Addr {
-	return l.LocalAddr()
+	return l.addr
+}
+
+func (l *listener) Close() error {
+	l.closeOnce.Do(func() {
+		close(l.ch)
+	})
+	return nil
 }

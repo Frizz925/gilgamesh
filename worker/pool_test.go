@@ -35,3 +35,13 @@ func (suite *PoolTestSuite) TestDynamic() {
 	p.Put(w)
 	p.Close()
 }
+
+func (suite *PoolTestSuite) TestFull() {
+	p := NewPool(1, suite.config)
+	w := p.Get()
+	p.Put(w)
+	suite.Require().Panics(func() {
+		p.Put(w)
+	})
+	p.Close()
+}
