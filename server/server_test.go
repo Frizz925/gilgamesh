@@ -18,10 +18,11 @@ func TestServer(t *testing.T) {
 	defer l.Close()
 	defer c.Close()
 
-	New(Config{
+	s := New(Config{
 		Logger: logger,
 		WorkerConfig: worker.Config{
 			Logger: logger,
 		},
 	})
+	s.Close()
 }

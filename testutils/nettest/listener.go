@@ -1,9 +1,12 @@
 package nettest
 
 import (
+	"errors"
 	"net"
 	"sync"
 )
+
+var ErrListenerClosed = errors.New("listener closed")
 
 type listener struct {
 	ch        chan net.Conn
@@ -22,7 +25,11 @@ func NewListener() (net.Listener, net.Conn) {
 }
 
 func (l *listener) Accept() (net.Conn, error) {
-	return <-l.ch, nil
+	c, ok := <-l.ch
+	if ok {
+		return c, nil
+	}
+	return nil, ErrListenerClosed
 }
 
 func (l *listener) Addr() net.Addr {

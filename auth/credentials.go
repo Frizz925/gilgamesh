@@ -31,7 +31,9 @@ func WriteCredentials(w io.Writer, credentials Credentials) error {
 	}
 	for user, password := range credentials {
 		line := fmt.Sprintf("%s:%s\n", user, password)
-		bw.WriteString(line) //nolint:errcheck
+		if _, err := bw.WriteString(line); err != nil {
+			return err
+		}
 	}
 	return bw.Flush()
 }

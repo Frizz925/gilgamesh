@@ -36,4 +36,7 @@ func TestListener(t *testing.T) {
 	require.Equal(expected, <-ch)
 	require.NotNil(server.Addr())
 	require.NoError(server.Close())
+
+	_, err := server.Accept()
+	require.Equal(ErrListenerClosed, err)
 }

@@ -59,7 +59,10 @@ func (s *Server) Close() {
 }
 
 func (s *Server) serve(l net.Listener, isTLS bool) error {
-	log := s.logger.With(zap.String("listener", l.Addr().String()))
+	log := s.logger.With(
+		zap.String("domain", "server"),
+		zap.String("listener", l.Addr().String()),
+	)
 	log.Info("Gilgamesh service started")
 	defer log.Info("Gilgamesh service stopped")
 	for {

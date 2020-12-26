@@ -219,7 +219,10 @@ func (w *Worker) ServeConn(c net.Conn) {
 			log.Error("Failed to dump request", zap.Error(err))
 			return
 		}
-		tw.Write(b) //nolint:errcheck
+		if _, err := tw.Write(b); err != nil {
+			log.Error("Failed to write request to buffer", zap.Error(err))
+			return
+		}
 		if err := tw.Flush(); err != nil {
 			log.Error("Failed to write request to tunnel", zap.Error(err))
 			return
@@ -234,7 +237,9 @@ func (w *Worker) ServeConn(c net.Conn) {
 			if err != nil {
 				return err
 			}
-			tw.Write(w.peerBuf[:n]) //nolint:errcheck
+			if _, err := tw.Write(w.peerBuf[:n]); err != nil {
+				return err
+			}
 			if err := tw.Flush(); err != nil {
 				return err
 			}
@@ -247,7 +252,9 @@ func (w *Worker) ServeConn(c net.Conn) {
 			if err != nil {
 				return err
 			}
-			wb.Write(w.tunnelBuf[:n]) //nolint:errcheck
+			if _, err := wb.Write(w.tunnelBuf[:n]); err != nil {
+				return err
+			}
 			if err := wb.Flush(); err != nil {
 				return err
 			}
